@@ -96,21 +96,13 @@
         networks:
           - name: gitlab-network
 
-    - name: Wait until GitLab initial password file is available
+    - name: Wait until GitLab initial password file exists inside the container
       shell: |
-        while [ ! -f /etc/gitlab/initial_root_password ]; do
-          echo "Waiting for initial password file..."
-          sleep 10
-        done
-      args:
-        executable: /bin/bash
-      delegate_to: localhost
-      become: false
+        docker exec gitlab-ce test -f /etc/gitlab/initial_root_password
+      register: wait_result
       retries: 30
       delay: 10
-      register: wait_result
-      changed_when: false
-      until: wait_result is succeeded
+      until: wait_result.rc == 0
 
     - name: Retrieve GitLab initial root password
       command: docker exec gitlab-ce grep 'Password:' /etc/gitlab/initial_root_password
