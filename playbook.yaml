@@ -1,0 +1,116 @@
+---
+- name: Install and Configure GitLab using Docker
+  hosts: all
+  become: yes
+
+  vars:
+    gitlab_domain: "{{ gitlab_domain | default('localhost') }}"
+    gitlab_external_url: "{{ gitlab_domain }}"
+    gitlab_home: "/gitlab"  # Update this path
+
+  tasks:
+    - name: Install general prerequisites
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg-agent
+          - software-properties-common
+          - python3
+          - python3-pip
+        update_cache: yes
+      when: ansible_facts.packages['docker-ce'] is not defined
+
+    - name: Add Docker’s official GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+        state: present
+
+    - name: Install Docker Engine
+      apt:
+        name: docker-ce
+        update_cache: yes
+        state: latest
+
+    - name: Ensure Python Docker SDK is installed
+      pip:
+        name: docker
+        state: present
+        
+    - name: Ensure gitlab_home directory exists
+      file:
+        path: "{{ gitlab_home }}"
+        state: directory
+        owner: root  # You can change the owner and group as needed
+        group: root
+        mode: '0755'
+
+    - name: Pull GitLab Docker image
+      docker_image:
+        name: gitlab/gitlab-ce:latest
+        source: pull
+
+    - name: Create GitLab network
+      docker_network:
+        name: gitlab-network
+    
+    - name: Create and start GitLab container
+      docker_container:
+        name: gitlab-ce
+        image: gitlab/gitlab-ce:latest
+        state: started
+        restart_policy: always
+        hostname: gitlab
+        env:
+          GITLAB_OMNIBUS_CONFIG: |
+            external_url '{{ gitlab_external_url }}';
+        ports:
+          - "80:80"
+          - "443:443"
+        volumes:
+          - "{{ gitlab_home }}/config:/etc/gitlab"
+          - "{{ gitlab_home }}/logs:/var/log/gitlab"
+          - "{{ gitlab_home }}/data:/var/opt/gitlab"
+        networks:
+          - name: gitlab-network
+
+    - name: Pull GitLab Runner Docker image
+      docker_image:
+        name: gitlab/gitlab-runner:alpine
+        source: pull
+
+    - name: Create and start GitLab Runner container
+      docker_container:
+        name: gitlab-runner
+        image: gitlab/gitlab-runner:alpine
+        state: started
+        restart_policy: always
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+          - "{{ gitlab_home }}/gitlab-runner:/etc/gitlab-runner"
+        networks:
+          - name: gitlab-network
+    
+    - name: Retrieve GitLab initial root password
+      command: docker exec gitlab-ce grep 'Password:' /etc/gitlab/initial_root_password
+      register: gitlab_password
+    
+    - name: Log GitLab initial root password
+      debug:
+        var: gitlab_password.stdout
+
+    - name: This is your initial root password 
+      debug:
+        msg: "IMPORTANT  \n **************** \n {{ gitlab_password.stdout }} Change your root password on first login"
+
+    - name: Gitlab startup initialization 
+      debug:
+        msg: "Gitlab is doing it's first startup initialization. This may take several minutes depending your machine's processing power. You can visit {{gitlab_external_url}} after initialization to login to GitLab"
+
+    
